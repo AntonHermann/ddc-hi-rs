@@ -1,7 +1,11 @@
 use std::env::var;
 
 fn feature_enabled(name: &str) -> bool {
-    var(&format!("CARGO_FEATURE_{}", name.to_uppercase().replace("-", "_"))).is_ok()
+    var(&format!(
+        "CARGO_FEATURE_{}",
+        name.to_uppercase().replace("-", "_")
+    ))
+    .is_ok()
 }
 
 fn emit_feature(name: &str) {

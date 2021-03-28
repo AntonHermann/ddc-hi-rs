@@ -539,7 +539,8 @@ pub enum Handle {
 impl Handle {
     /// Request and parse the display's capabilities string.
     pub fn capabilities(&mut self) -> Result<mccs::Capabilities, DdcCiError> {
-        mccs_caps::parse_capabilities(&self.capabilities_string()?).map_err(DdcCiError::ParseCapabilities)
+        mccs_caps::parse_capabilities(&self.capabilities_string()?)
+            .map_err(DdcCiError::ParseCapabilities)
     }
 }
 
