@@ -21,29 +21,35 @@
 //! }
 //! ```
 
-extern crate ddc;
-extern crate edid;
-extern crate mccs;
-extern crate mccs_caps;
-extern crate mccs_db;
-extern crate failure;
 #[macro_use]
 extern crate log;
 #[cfg(feature = "has-ddc-i2c")]
 extern crate ddc_i2c;
+#[cfg(feature = "has-ddc-macos")]
+extern crate ddc_macos;
 #[cfg(feature = "has-ddc-winapi")]
 extern crate ddc_winapi;
 #[cfg(feature = "has-nvapi")]
 extern crate nvapi;
-#[cfg(feature = "has-ddc-macos")]
-extern crate ddc_macos;
 
-use std::{io, fmt, str};
-use std::iter::FromIterator;
-use failure::Error;
 use ddc::Edid;
+use std::iter::FromIterator;
+use std::{fmt, io, str};
+use thiserror::Error;
 
-pub use ddc::{Ddc, DdcTable, DdcHost, FeatureCode, VcpValue, VcpValueType, TimingMessage};
+pub use ddc::{Ddc, DdcHost, DdcTable, FeatureCode, TimingMessage, VcpValue, VcpValueType};
+
+/// Generc DDC/CI error
+#[derive(Error, Debug)]
+pub enum DdcCiError {
+    /// Capabilities couldn't be parsed
+    #[error("Failed parsing capabilities")]
+    ParseCapabilities(#[from] io::Error),
+
+    /// There was an error in the underlying I²C communication
+    #[error("Error during DDC/CI I²C communication")]
+    DdcI2cError(#[from] ddc_i2c::Error<io::Error>),
+}
 
 /// Identifying information about an attached display.
 ///
@@ -84,8 +90,8 @@ impl DisplayInfo {
     /// Create an empty `DisplayInfo`.
     pub fn new(backend: Backend, id: String) -> Self {
         DisplayInfo {
-            backend: backend,
-            id: id,
+            backend,
+            id,
             manufacturer_id: None,
             model_id: None,
             version: None,
@@ -106,7 +112,8 @@ impl DisplayInfo {
     pub fn from_edid(backend: Backend, id: String, edid_data: Vec<u8>) -> io::Result<Self> {
         trace!("DisplayInfo::from_edid({:?}, {})", backend, id);
 
-        let edid = edid::parse(&edid_data).to_result()
+        let edid = edid::parse(&edid_data)
+            .to_result()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         let mut model_name = None;
@@ -121,8 +128,8 @@ impl DisplayInfo {
         }
 
         Ok(DisplayInfo {
-            backend: backend,
-            id: id,
+            backend,
+            id,
             edid_data: Some(edid_data),
             manufacturer_id: Some(String::from_iter(edid.header.vendor.iter())),
             model_id: Some(edid.header.product),
@@ -130,8 +137,8 @@ impl DisplayInfo {
             version: Some((edid.header.version, edid.header.revision)),
             manufacture_year: Some(edid.header.year),
             manufacture_week: Some(edid.header.week),
-            model_name: model_name,
-            serial_number: serial_number,
+            model_name,
+            serial_number,
             mccs_version: None,
             mccs_database: Default::default(),
         })
@@ -149,8 +156,8 @@ impl DisplayInfo {
         };
 
         let mut res = DisplayInfo {
-            backend: backend,
-            id: id,
+            backend,
+            id,
             model_name: caps.model.clone(),
             mccs_version: caps.mccs_version.clone(),
             edid_data: caps.edid.clone(),
@@ -197,7 +204,7 @@ impl DisplayInfo {
         }
 
         if self.manufacture_year.is_none() {
-            self.manufacture_year  = info.manufacture_year.clone()
+            self.manufacture_year = info.manufacture_year.clone()
         }
 
         if self.manufacture_week.is_none() {
@@ -252,6 +259,7 @@ impl DisplayInfo {
 /// A query to filter out matching displays.
 ///
 /// Most comparisons must match the full string.
+#[derive(Debug)]
 pub enum Query {
     /// Matches any display
     Any,
@@ -302,17 +310,26 @@ pub enum Backend {
 
 impl fmt::Display for Backend {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match *self {
-            Backend::I2cDevice => "i2c-dev",
-            Backend::WinApi => "winapi",
-            Backend::Nvapi => "nvapi",
-            Backend::MacOS => "macos",
-        })
+        write!(
+            f,
+            "{}",
+            match *self {
+                Backend::I2cDevice => "i2c-dev",
+                Backend::WinApi => "winapi",
+                Backend::Nvapi => "nvapi",
+                Backend::MacOS => "macos",
+            }
+        )
     }
 }
 
+/// Failed to parse backend
+#[derive(Error, Debug)]
+#[error("Failed parsing backend")]
+pub struct ParseBackendError;
+
 impl str::FromStr for Backend {
-    type Err = ();
+    type Err = ParseBackendError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
@@ -320,7 +337,7 @@ impl str::FromStr for Backend {
             "winapi" => Backend::WinApi,
             "nvapi" => Backend::Nvapi,
             "macos" => Backend::MacOS,
-            _ => return Err(()),
+            _ => return Err(ParseBackendError),
         })
     }
 }
@@ -329,7 +346,7 @@ impl Backend {
     /// Enumerate the possible backends.
     ///
     /// Backends not supported for the current platform will be excluded.
-    pub fn values() -> &'static [Backend] {
+    pub const fn values() -> &'static [Backend] {
         &[
             #[cfg(feature = "has-ddc-i2c")]
             Backend::I2cDevice,
@@ -339,6 +356,21 @@ impl Backend {
             Backend::Nvapi,
             #[cfg(feature = "has-ddc-macos")]
             Backend::MacOS,
+        ]
+    }
+    /// Enumerate the possible backends (as str's)
+    ///
+    /// Backends not supported for the current platform will be excluded.
+    pub const fn values_str() -> &'static [&'static str] {
+        &[
+            #[cfg(feature = "has-ddc-i2c")]
+            "i2c-dev",
+            #[cfg(feature = "has-ddc-winapi")]
+            "winapi",
+            #[cfg(feature = "has-nvapi")]
+            "nvapi",
+            #[cfg(feature = "has-ddc-macos")]
+            "macos",
         ]
     }
 }
@@ -354,10 +386,10 @@ pub struct Display {
 
 impl Display {
     /// Create a new display from the specified handle.
-    pub fn new(handle: Handle, info: DisplayInfo) -> Self {
+    pub const fn new(handle: Handle, info: DisplayInfo) -> Self {
         Display {
-            handle: handle,
-            info: info,
+            handle,
+            info,
             filled_caps: false,
         }
     }
@@ -370,51 +402,53 @@ impl Display {
         {
             use std::os::unix::fs::MetadataExt;
 
-            if let Ok(devs) = ddc_i2c::I2cDeviceEnumerator::new() {
-                displays.extend(devs
-                    .map(|mut ddc| -> Result<_, Error> {
+            match ddc_i2c::I2cDeviceEnumerator::new() {
+                Ok(devs) => displays.extend(
+                    devs.map(|mut ddc: ddc_i2c::I2cDeviceDdc| -> Result<_, ()> {
                         let mut edid = vec![0u8; 0x100];
-                        ddc.read_edid(0, &mut edid)?;
-                        let id = ddc.inner_ref().inner_ref().metadata().map(|meta| meta.rdev().to_string()).unwrap_or(Default::default());
-                        let info = DisplayInfo::from_edid(Backend::I2cDevice, id, edid)?;
-                        Ok(Display::new(
-                            Handle::I2cDevice(ddc),
-                            info,
-                        ))
-                    }).filter_map(|d| d.ok())
-                )
+                        ddc.read_edid(0, &mut edid).map_err(|e| {
+                            info!("Failed to read DDC edid: {}", e);
+                        })?;
+                        let id = ddc
+                            .inner_ref()
+                            .inner_ref()
+                            .metadata()
+                            .map(|meta| meta.rdev().to_string())
+                            .unwrap_or(Default::default());
+                        let info =
+                            DisplayInfo::from_edid(Backend::I2cDevice, id, edid).map_err(|e| {
+                                info!("Failed to parse display info from edid: {}", e);
+                            })?;
+                        Ok(Display::new(Handle::I2cDevice(ddc), info))
+                    })
+                    .filter_map(|d| d.ok()),
+                ),
+                Err(e) => info!("Error during I2C device enumeration: {}", e),
             }
         }
 
         #[cfg(feature = "has-ddc-winapi")]
         {
             if let Ok(devs) = ddc_winapi::Monitor::enumerate() {
-                displays.extend(devs.into_iter()
-                    .map(|ddc| {
-                        let info = DisplayInfo::new(Backend::WinApi, ddc.description());
-                        Display::new(
-                            Handle::WinApi(ddc),
-                            info,
-                        )
-                    })
-                )
+                displays.extend(devs.into_iter().map(|ddc| {
+                    let info = DisplayInfo::new(Backend::WinApi, ddc.description());
+                    Display::new(Handle::WinApi(ddc), info)
+                }))
             }
         }
 
         #[cfg(feature = "has-ddc-macos")]
         {
             if let Ok(devs) = ddc_macos::Monitor::enumerate() {
-                displays.extend(devs.into_iter()
-                    .map(|ddc| {
-                        let info = ddc
-                            .edid()
-                            .and_then( |edid| {
-                                DisplayInfo::from_edid(Backend::MacOS, ddc.description(), edid).ok()
-                            })
-                            .unwrap_or(DisplayInfo::new(Backend::MacOS, ddc.description()));
-                        Display::new(Handle::MacOS(ddc), info)
-                    })
-                )
+                displays.extend(devs.into_iter().map(|ddc| {
+                    let info = ddc
+                        .edid()
+                        .and_then(|edid| {
+                            DisplayInfo::from_edid(Backend::MacOS, ddc.description(), edid).ok()
+                        })
+                        .unwrap_or(DisplayInfo::new(Backend::MacOS, ddc.description()));
+                    Display::new(Handle::MacOS(ddc), info)
+                }))
             }
         }
 
@@ -427,7 +461,9 @@ impl Display {
                     for gpu in gpus {
                         let gpu = Rc::new(gpu);
                         let id_prefix = gpu.short_name().unwrap_or("NVAPI".into());
-                        if let Ok(ids) = gpu.display_ids_connected(nvapi::ConnectedIdsFlags::empty()) {
+                        if let Ok(ids) =
+                            gpu.display_ids_connected(nvapi::ConnectedIdsFlags::empty())
+                        {
                             for id in ids {
                                 let mut i2c = nvapi::I2c::new(gpu.clone(), id.display_id); // TODO: it says mask, is it actually `1<<display_id` instead?
                                 i2c.set_port(None, true); // TODO: port=Some(1) instead? docs seem to indicate it's not optional, but the one example I can find keeps it unset so...
@@ -438,16 +474,18 @@ impl Display {
 
                                 let mut ddc = ddc_i2c::I2cDdc::new(i2c);
 
-                                let id = format!("{}/{}:{:?}", id_prefix, id.display_id, id.connector);
+                                let id =
+                                    format!("{}/{}:{:?}", id_prefix, id.display_id, id.connector);
                                 let mut edid = vec![0u8; 0x80]; // 0x100
-                                if let Ok(ddc) = ddc.read_edid(0, &mut edid)
+                                if let Ok(ddc) = ddc
+                                    .read_edid(0, &mut edid)
                                     .map_err(Error::from)
-                                    .and_then(|_| DisplayInfo::from_edid(Backend::Nvapi, id, edid)
-                                        .map_err(Error::from)
-                                    ).map(|info| Display::new(
-                                        Handle::Nvapi(ddc),
-                                        info,
-                                    )) {
+                                    .and_then(|_| {
+                                        DisplayInfo::from_edid(Backend::Nvapi, id, edid)
+                                            .map_err(Error::from)
+                                    })
+                                    .map(|info| Display::new(Handle::Nvapi(ddc), info))
+                                {
                                     displays.push(ddc);
                                 }
                             }
@@ -462,14 +500,11 @@ impl Display {
 
     /// Updates the display info with data retrieved from the device's
     /// reported capabilities.
-    pub fn update_capabilities(&mut self) -> Result<(), Error> {
+    pub fn update_capabilities(&mut self) -> Result<(), DdcCiError> {
         if !self.filled_caps {
             let (backend, id) = (self.info.backend, self.info.id.clone());
             let caps = self.handle.capabilities()?;
-            let info = DisplayInfo::from_capabilities(
-                backend, id,
-                &caps,
-            );
+            let info = DisplayInfo::from_capabilities(backend, id, &caps);
             if info.mccs_version.is_some() {
                 self.info.mccs_database = Default::default();
             }
@@ -480,7 +515,7 @@ impl Display {
     }
 
     /// Update some display info.
-    pub fn update_from_ddc(&mut self) -> Result<(), Error> {
+    pub fn update_from_ddc(&mut self) -> Result<(), DdcCiError> {
         self.info.update_from_ddc(&mut self.handle)
     }
 }
@@ -503,14 +538,13 @@ pub enum Handle {
 
 impl Handle {
     /// Request and parse the display's capabilities string.
-    pub fn capabilities(&mut self) -> Result<mccs::Capabilities, Error> {
-        mccs_caps::parse_capabilities(&self.capabilities_string()?)
-            .map_err(From::from)
+    pub fn capabilities(&mut self) -> Result<mccs::Capabilities, DdcCiError> {
+        mccs_caps::parse_capabilities(&self.capabilities_string()?).map_err(DdcCiError::ParseCapabilities)
     }
 }
 
 impl ddc::DdcHost for Handle {
-    type Error = Error;
+    type Error = DdcCiError;
 
     fn sleep(&mut self) {
         match *self {
@@ -558,9 +592,13 @@ impl Ddc for Handle {
             #[cfg(feature = "has-ddc-i2c")]
             Handle::I2cDevice(ref mut i2c) => i2c.set_vcp_feature(code, value).map_err(From::from),
             #[cfg(feature = "has-ddc-winapi")]
-            Handle::WinApi(ref mut monitor) => monitor.set_vcp_feature(code, value).map_err(From::from),
+            Handle::WinApi(ref mut monitor) => {
+                monitor.set_vcp_feature(code, value).map_err(From::from)
+            }
             #[cfg(feature = "has-ddc-macos")]
-            Handle::MacOS(ref mut monitor) => monitor.set_vcp_feature(code, value).map_err(From::from),
+            Handle::MacOS(ref mut monitor) => {
+                monitor.set_vcp_feature(code, value).map_err(From::from)
+            }
             #[cfg(feature = "has-nvapi")]
             Handle::Nvapi(ref mut i2c) => i2c.set_vcp_feature(code, value).map_err(From::from),
         }
@@ -601,22 +639,35 @@ impl DdcTable for Handle {
             #[cfg(feature = "has-ddc-macos")]
             Handle::MacOS(ref mut i2c) => i2c.table_read(code).map_err(From::from),
             #[cfg(feature = "has-ddc-winapi")]
-            Handle::WinApi(_) =>
-                Err(io::Error::new(io::ErrorKind::Other, "winapi does not support DDC tables").into()),
+            Handle::WinApi(_) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "winapi does not support DDC tables",
+            )
+            .into()),
             #[cfg(feature = "has-nvapi")]
             Handle::Nvapi(ref mut i2c) => i2c.table_read(code).map_err(From::from),
         }
     }
 
-    fn table_write(&mut self, code: FeatureCode, offset: u16, value: &[u8]) -> Result<(), Self::Error> {
+    fn table_write(
+        &mut self,
+        code: FeatureCode,
+        offset: u16,
+        value: &[u8],
+    ) -> Result<(), Self::Error> {
         match *self {
             #[cfg(feature = "has-ddc-i2c")]
-            Handle::I2cDevice(ref mut i2c) => i2c.table_write(code, offset, value).map_err(From::from),
+            Handle::I2cDevice(ref mut i2c) => {
+                i2c.table_write(code, offset, value).map_err(From::from)
+            }
             #[cfg(feature = "has-ddc-macos")]
             Handle::MacOS(ref mut i2c) => i2c.table_write(code, offset, value).map_err(From::from),
             #[cfg(feature = "has-ddc-winapi")]
-            Handle::WinApi(_) =>
-                Err(io::Error::new(io::ErrorKind::Other, "winapi does not support DDC tables").into()),
+            Handle::WinApi(_) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "winapi does not support DDC tables",
+            )
+            .into()),
             #[cfg(feature = "has-nvapi")]
             Handle::Nvapi(ref mut i2c) => i2c.table_write(code, offset, value).map_err(From::from),
         }
