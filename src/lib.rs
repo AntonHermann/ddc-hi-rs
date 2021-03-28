@@ -32,6 +32,7 @@ extern crate ddc_winapi;
 #[cfg(feature = "has-nvapi")]
 extern crate nvapi;
 
+#[cfg(not(feature = "has-ddc-winapi"))]
 use ddc::Edid;
 use std::iter::FromIterator;
 use std::{fmt, io, str};
@@ -46,9 +47,20 @@ pub enum DdcCiError {
     #[error("Failed parsing capabilities")]
     ParseCapabilities(#[from] io::Error),
 
+    #[cfg(feature = "has-ddc-i2c")]
     /// There was an error in the underlying I²C communication
     #[error("Error during DDC/CI I²C communication")]
-    DdcI2cError(#[from] ddc_i2c::Error<io::Error>),
+    DdcI2cIoError(#[from] ddc_i2c::Error<io::Error>),
+
+    #[cfg(feature = "has-nvapi")]
+    /// There was an error in the underlying I²C communication
+    #[error("Error during DDC/CI I²C communication")]
+    DdcI2cStatusError(#[from] ddc_i2c::Error<nvapi::Status>),
+
+    #[cfg(feature = "has-nvapi")]
+    /// There was an error in the nvapi code
+    #[error("NVAPI status error")]
+    StatusError(#[from] nvapi::Status),
 }
 
 /// Identifying information about an attached display.
@@ -480,10 +492,10 @@ impl Display {
                                 let mut edid = vec![0u8; 0x80]; // 0x100
                                 if let Ok(ddc) = ddc
                                     .read_edid(0, &mut edid)
-                                    .map_err(Error::from)
+                                    .map_err(DdcCiError::StatusError)
                                     .and_then(|_| {
                                         DisplayInfo::from_edid(Backend::Nvapi, id, edid)
-                                            .map_err(Error::from)
+                                            .map_err(DdcCiError::from)
                                     })
                                     .map(|info| Display::new(Handle::Nvapi(ddc), info))
                                 {
@@ -634,6 +646,7 @@ impl Ddc for Handle {
 }
 
 impl DdcTable for Handle {
+    #[cfg_attr(feature = "has-ddc-winapi", allow(unused_variables))]
     fn table_read(&mut self, code: FeatureCode) -> Result<Vec<u8>, Self::Error> {
         match *self {
             #[cfg(feature = "has-ddc-i2c")]
@@ -651,6 +664,7 @@ impl DdcTable for Handle {
         }
     }
 
+    #[cfg_attr(feature = "has-ddc-winapi", allow(unused_variables))]
     fn table_write(
         &mut self,
         code: FeatureCode,
