@@ -32,7 +32,6 @@ extern crate ddc_winapi;
 #[cfg(feature = "has-nvapi")]
 extern crate nvapi;
 
-#[cfg(not(feature = "has-ddc-winapi"))]
 use ddc::Edid;
 use std::iter::FromIterator;
 use std::{fmt, io, str};
