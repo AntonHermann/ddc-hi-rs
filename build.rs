@@ -17,10 +17,8 @@ fn main() {
         if feature_enabled("ddc-macos") {
             emit_feature("has-ddc-macos");
         }
-    } else if var("CARGO_CFG_UNIX").is_ok() {
-        if feature_enabled("ddc-i2c") {
-            emit_feature("has-ddc-i2c");
-        }
+    } else if var("CARGO_CFG_UNIX").is_ok() && feature_enabled("ddc-i2c") {
+        emit_feature("has-ddc-i2c");
     }
 
     if var("CARGO_CFG_WINDOWS").is_ok() {

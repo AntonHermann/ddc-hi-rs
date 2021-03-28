@@ -11,11 +11,11 @@
 //! for mut display in Display::enumerate() {
 //!     display.update_capabilities().unwrap();
 //!     println!("{:?} {}: {:?} {:?}",
-//!			display.info.backend, display.info.id,
-//!			display.info.manufacturer_id, display.info.model_name
-//!		);
+//!        display.info.backend, display.info.id,
+//!        display.info.manufacturer_id, display.info.model_name
+//!     );
 //!     if let Some(feature) = display.info.mccs_database.get(0xdf) {
-//!			let value = display.handle.get_vcp_feature(feature.code).unwrap();
+//!         let value = display.handle.get_vcp_feature(feature.code).unwrap();
 //!         println!("{}: {:?}", feature.name.as_ref().unwrap(), value);
 //!     }
 //! }
@@ -159,7 +159,7 @@ impl DisplayInfo {
             backend,
             id,
             model_name: caps.model.clone(),
-            mccs_version: caps.mccs_version.clone(),
+            mccs_version: caps.mccs_version,
             edid_data: caps.edid.clone(),
             // TODO: VDIF
             serial_number: None,
@@ -192,23 +192,23 @@ impl DisplayInfo {
         }
 
         if self.model_id.is_none() {
-            self.model_id = info.model_id.clone()
+            self.model_id = info.model_id
         }
 
         if self.version.is_none() {
-            self.version = info.version.clone()
+            self.version = info.version
         }
 
         if self.serial.is_none() {
-            self.serial = info.serial.clone()
+            self.serial = info.serial
         }
 
         if self.manufacture_year.is_none() {
-            self.manufacture_year = info.manufacture_year.clone()
+            self.manufacture_year = info.manufacture_year
         }
 
         if self.manufacture_week.is_none() {
-            self.manufacture_week = info.manufacture_week.clone()
+            self.manufacture_week = info.manufacture_week
         }
 
         if self.model_name.is_none() {
@@ -224,12 +224,12 @@ impl DisplayInfo {
         }
 
         if self.mccs_version.is_none() {
-            self.mccs_version = info.mccs_version.clone()
+            self.mccs_version = info.mccs_version
         }
 
         if self.mccs_database.get(0xdf).is_none() {
             if info.mccs_version.is_some() {
-                self.mccs_version = info.mccs_version.clone()
+                self.mccs_version = info.mccs_version
             }
             self.mccs_database = info.mccs_database.clone()
         }
@@ -297,6 +297,7 @@ impl Query {
 
 /// Identifies the backend driver used to communicate with a display.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Backend {
     /// Linux i2c-dev driver
     I2cDevice,
@@ -414,7 +415,7 @@ impl Display {
                             .inner_ref()
                             .metadata()
                             .map(|meta| meta.rdev().to_string())
-                            .unwrap_or(Default::default());
+                            .unwrap_or_default();
                         let info =
                             DisplayInfo::from_edid(Backend::I2cDevice, id, edid).map_err(|e| {
                                 info!("Failed to parse display info from edid: {}", e);
